@@ -2,6 +2,7 @@
 //C++
 #include <fstream>
 #include <iostream>
+#include <algorithm>
 
 //Boost
 #include <boost/tokenizer.hpp>
@@ -24,20 +25,40 @@ using namespace HepMC3;
 //_____________________________________________________________________________
 int main(int argc, char* argv[]) {
 
+  //configuration file
+  program_options::options_description opt("opt");
+  opt.add_options()
+    ("main.input", program_options::value<string>(), "bhgen input")
+    ("main.hepmc", program_options::value<string>(), "hepmc output")
+    ("main.root", program_options::value<string>(), "ROOT output")
+    ("main.npart", program_options::value<int>()->default_value(3), "Particles per event")
+    ("main.nmax", program_options::value<long>()->default_value(-1), "Maximal number of events")
+    ("main.invert_z", program_options::value<bool>(), "Inversion along z axis")
+  ;
+
+  //load the configuration file
+  ifstream config(argv[1]);
+  program_options::variables_map opt_map;
+  program_options::store(program_options::parse_config_file(config, opt), opt_map);
+
   //bhgen input
-  string input = "./evt.txt";
-  //if( opt_map.count("input") ) {
-    //input = opt_map["input"].as<string>();
-  //}
+  string input = opt_map["main.input"].as<string>();
+  input.erase(remove(input.begin(), input.end(), '\"'), input.end());
+  cout << "Input: " << input << endl;
   ifstream in(input);
 
   //HepMC3 output
-  string output = "evt.hepmc";
+  string hepmc_output = opt_map["main.hepmc"].as<string>();
+  hepmc_output.erase(remove(hepmc_output.begin(), hepmc_output.end(), '\"'), hepmc_output.end());
+  cout << "HepMC3: " << hepmc_output << endl;
   std::shared_ptr<GenRunInfo> run = std::make_shared<GenRunInfo>();
-  WriterAscii file(output, run);
+  WriterAscii file(hepmc_output, run);
 
   //ROOT output
-  TFile out_root("evt.root", "recreate");
+  string root_output = opt_map["main.root"].as<string>();
+  root_output.erase(remove(root_output.begin(), root_output.end(), '\"'), root_output.end());
+  cout << "ROOT: " << root_output << endl;
+  TFile out_root(root_output.c_str(), "recreate");
   TTree otree("bhgen_tree", "bhgen_tree");
   Double_t phot_en, phot_theta, phot_phi, el_en, el_theta, el_phi, p_en, p_theta, p_phi, p_pt;
   otree.Branch("phot_en", &phot_en, "phot_en/D");
@@ -52,16 +73,23 @@ int main(int argc, char* argv[]) {
   otree.Branch("p_pt", &p_pt, "p_pt/D");
 
   //particles per event
-  int npart = 3;
+  int npart = opt_map["main.npart"].as<int>();
+
+  //inversion along z axis
+  int invert_z = 1;
+  if( opt_map.count("main.invert_z") and opt_map["main.invert_z"].as<bool>() ) {
+    invert_z = -1;
+  }
 
   //input loop
   long iev = 0; // line index
-  long nmax = -1; // maximal number of events
+  long nmax = opt_map["main.nmax"].as<long>(); // maximal number of events
 
   string line; // read line
   char_separator<char> sep(" "); // for tokenizer
   while( getline(in, line) ) {
-    if( ++iev > nmax and nmax >= 0 ) break;
+    if( nmax >= 0 and iev >= nmax ) break;
+    iev++;
 
     //HepMC3 event
     GenEvent evt(Units::GEV, Units::MM);
@@ -83,7 +111,7 @@ int main(int argc, char* argv[]) {
       double en = stod(*it++);
       double px = stod(*it++);
       double py = stod(*it++);
-      double pz = stod(*it++);
+      double pz = invert_z*stod(*it++);
 
       //HepMC particle
       FourVector vec(px, py, pz, en);
@@ -111,7 +139,7 @@ int main(int argc, char* argv[]) {
         p_pt = vec.pt();
       }
 
-      cout << pdg << " " << en << " " << px << " " << py << " " << pz << endl;
+      //cout << pdg << " " << en << " " << px << " " << py << " " << pz << endl;
 
     }//particle loop
 
@@ -124,6 +152,8 @@ int main(int argc, char* argv[]) {
   in.close();
   otree.Write();
   out_root.Close();
+
+  cout << "All done, number of events: " << iev << endl;
 
   return 0;
 
